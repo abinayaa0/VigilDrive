@@ -112,11 +112,11 @@ def main():
                         help="Input source: 'webcam', 'dataset' (image directory sequences), or 'video'")
     parser.add_argument("--cam-idx", type=int, default=0, help="Camera device index for webcam mode")
     parser.add_argument("--dataset-dir", type=str, 
-                        default=r"C:\PROJECTS\VigilDrive\dataset_NTHU\Multi class\train\drowsy\yawning",
+                        default="Multi class/train/drowsy/yawning",
                         help="Directory path to NTHU dataset image sequences")
     parser.add_argument("--video-path", type=str, default="", help="Path to video file")
     parser.add_argument("--output-path", type=str, default="outputs/output.avi", help="Path to save processed video")
-    parser.add_argument("--max-frames", type=int, default=150, help="Max frames to process (especially in dataset mode)")
+    parser.add_argument("--max-frames", type=int, default=-1, help="Max frames to process (-1 for unlimited/all frames)")
     parser.add_argument("--no-show", action="store_true", help="Disable cv2.imshow for headless verification environment")
     
     args = parser.parse_args()
@@ -139,6 +139,7 @@ def main():
     image_paths = []
     cap = None
     
+    target_fps = 20.0
     if args.mode == "dataset":
         print(f"Loading sequence from NTHU directory: {args.dataset_dir}")
         image_paths = get_sequence_images(args.dataset_dir)
@@ -146,12 +147,17 @@ def main():
             print("Error: No images found in sequence directory.")
             return
         print(f"Loaded {len(image_paths)} images from NTHU dataset.")
-        total_frames = min(len(image_paths), args.max_frames)
+        total_frames = len(image_paths)
+        if args.max_frames > 0:
+            total_frames = min(total_frames, args.max_frames)
+        target_fps = 30.0  # standard playback speed for datasets
     elif args.mode == "video":
         if not os.path.exists(args.video_path):
             print(f"Error: Video file {args.video_path} does not exist.")
             return
         cap = cv2.VideoCapture(args.video_path)
+        video_fps = cap.get(cv2.CAP_PROP_FPS)
+        target_fps = video_fps if video_fps > 0 else 30.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if args.max_frames > 0:
             total_frames = min(total_frames, args.max_frames)
@@ -161,15 +167,18 @@ def main():
         if not cap.isOpened():
             print(f"Error: Webcam index {args.cam_idx} failed to open.")
             return
-        total_frames = args.max_frames
+        webcam_fps = cap.get(cv2.CAP_PROP_FPS)
+        target_fps = webcam_fps if webcam_fps > 0 else 30.0
+        total_frames = args.max_frames if args.max_frames > 0 else float('inf')
 
-    # Setup Video Writer
+    # Setup Video Writer with natural target FPS
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    out = cv2.VideoWriter(args.output_path, fourcc, 20.0, (640, 480))
-    print(f"Video Writer initialized to save output to: {args.output_path}")
+    out = cv2.VideoWriter(args.output_path, fourcc, target_fps, (640, 480))
+    print(f"Video Writer initialized (FPS: {target_fps:.1f}) to save output to: {args.output_path}")
 
     frame_count = 0
     prev_time = time.time()
+    paused = False
     
     print("\nStarting VigilDrive processing pipeline...")
     try:
@@ -187,18 +196,22 @@ def main():
                     print("End of stream or failed to grab frame.")
                     break
             
-            # Calculate FPS
+            # Calculate processing FPS (real-time speed)
             curr_time = time.time()
             time_diff = curr_time - prev_time
             fps = 1.0 / time_diff if time_diff > 0 else 20.0
             prev_time = curr_time
             
+            # For time tracking, use video/dataset native target FPS (to keep thresholds accurate)
+            # and use processing FPS for webcam
+            tracking_fps = fps if args.mode == "webcam" else target_fps
+
             # 2. Process frame through VigilDrive Pipeline
             processed_frame, states = process_frame(
                 frame, detector, tracker, 
                 ear_smoother, mar_smoother, 
                 pitch_smoother, yaw_smoother, roll_smoother, 
-                fps
+                tracking_fps
             )
             
             # 3. Write output frame
@@ -214,10 +227,45 @@ def main():
             if not args.no_show:
                 try:
                     cv2.imshow("VigilDrive DMS HUD", processed_frame)
-                    # Press 'q' to abort early
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        print("User initiated abort.")
-                        break
+                    
+                    # Calculate wait time to display at target natural speed
+                    delay_ms = 1 if args.mode == "webcam" else max(1, int(1000 / target_fps))
+                    
+                    # Wait indefinitely if paused (delay = 0), otherwise use the frame delay
+                    key = cv2.waitKey(0 if paused else delay_ms)
+                    
+                    if key != -1:
+                        key_code = key & 0xFFFFFFFF
+                        key_char = key & 0xFF
+                        
+                        # Spacebar (32): Play/Pause toggle
+                        if key_char == 32:
+                            paused = not paused
+                            print("Playback Paused." if paused else "Playback Resumed.")
+                            
+                        # 'q' (113) or Escape (27): Quit
+                        elif key_char in (ord('q'), ord('Q'), 27):
+                            print("User initiated abort.")
+                            break
+                            
+                        # Left arrow, 'a', or virtual key 37: Skip backward 5s
+                        elif key_char in (ord('a'), ord('A')) or key_code in (2424832, 0x250000, 37):
+                            skip_frames = int(5 * target_fps)
+                            frame_count = max(0, frame_count - skip_frames)
+                            if args.mode == "video":
+                                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
+                            print(f"Skipped backward 5 seconds to frame {frame_count}")
+                            continue
+                            
+                        # Right arrow, 'd', or virtual key 39: Skip forward 5s
+                        elif key_char in (ord('d'), ord('D')) or key_code in (2490368, 0x270000, 39):
+                            skip_frames = int(5 * target_fps)
+                            frame_count = min(total_frames - 1, frame_count + skip_frames)
+                            if args.mode == "video":
+                                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count)
+                            print(f"Skipped forward 5 seconds to frame {frame_count}")
+                            continue
+
                 except cv2.error:
                     # In a headless system, imshow will fail. Set args.no_show=True automatically.
                     print("GUI Display error detected (running in headless environment). Disabling display preview.")

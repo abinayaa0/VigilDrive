@@ -1,18 +1,92 @@
-# Python
+# ==========================================
+# VigilDrive - Git Ignore Configuration
+# ==========================================
+
+# --- Python ---
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual Environments ---
 .venv/
 venv/
 ENV/
 env/
+venv.bak/
+env.bak/
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Datasets & Outputs
+# --- Datasets & Data Directories ---
 dataset_NTHU/
-outputs/
+"Multi class/"
+Multi class/
+data/
+datasets/
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
 
-# IDE / OS files
+# --- Machine Learning Weights & Checkpoints ---
+*.pt
+*.pth
+*.weights
+*.onnx
+*.pb
+*.h5
+*.tflite
+checkpoint/
+checkpoints/
+
+# --- Training Runs & Outputs ---
+runs/
+outputs/
+*.log
+
+# --- Local Environment & Configs ---
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.local
+local_settings.py
+
+# --- IDEs / Editors ---
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+.ipynb_checkpoints/
+
+# --- OS-specific ---
 .DS_Store
+.DS_Store?
+._*
 Thumbs.db
+desktop.ini
